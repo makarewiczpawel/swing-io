@@ -21,15 +21,16 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+from app.services import state_store
+
 logger = logging.getLogger(__name__)
 
-# ─── Top-50 S&P 500 komponentów (proxy dla breadth) ──────────────
+# ─── Top-25 S&P 500 komponentów (proxy dla breadth) ──────────────
+# Zredukowane z 50 → 25 dla szybszego batch download (yfinance rate limits)
 SP500_PROXY = [
     "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","BRK-B","UNH","XOM",
     "JPM","JNJ","V","PG","HD","MA","AVGO","CVX","LLY","ABBV",
-    "MRK","PEP","COST","ADBE","AMD","CSCO","TMO","ABT","ACN","CRM",
-    "DIS","NEE","NKE","QCOM","BMY","MDT","ORCL","NFLX","TXN","WMT",
-    "MCD","RTX","HON","LOW","CAT","SPGI","GS","AXP","BKNG","AMGN",
+    "WMT","MRK","PEP","COST","ORCL",
 ]
 
 # Cache z lockiem — zapobiega podwójnym obliczeniom przy concurrent requests
@@ -170,27 +171,92 @@ def _volatility_history(days: int = 252) -> dict:
 
 # ─── 2. Breadth ───────────────────────────────────────────────────
 
+BREADTH_DISK_TTL = 4 * 3600  # 4h na dysku (przeżyje restart)
+
+
+def _breadth_compute() -> dict:
+    """Pobierz dane 25 spółek i policz breadth. Może rzucić wyjątek przy rate limit."""
+    logger.info(f"Computing breadth for {len(SP500_PROXY)} stocks...")
+    closes = _fetch(SP500_PROXY, 320)
+    above50, above200, total = 0, 0, 0
+    for col in closes.columns:
+        s = closes[col].dropna()
+        if len(s) < 50:
+            continue
+        total += 1
+        sma50  = s.tail(50).mean()
+        above50  += int(s.iloc[-1] > sma50)
+        if len(s) >= 200:
+            sma200 = s.tail(200).mean()
+            above200 += int(s.iloc[-1] > sma200)
+
+    pct50  = round(above50  / total * 100, 1) if total else 50.0
+    pct200 = round(above200 / total * 100, 1) if total else 50.0
+    return {
+        "pct_above_sma50":  pct50,
+        "pct_above_sma200": pct200,
+        "sample_size":      total,
+        "computed_at":      time.time(),
+    }
+
+
 def _breadth_snapshot() -> dict:
-    """Oblicz % spółek proxy S&P 500 powyżej SMA 50 i SMA 200."""
-    def compute():
-        logger.info(f"Computing breadth for {len(SP500_PROXY)} stocks...")
-        closes = _fetch(SP500_PROXY, 320)  # 320 dni kalendarzowych ≈ 220+ sesji handlowych
-        above50, above200, total = 0, 0, 0
-        for col in closes.columns:
-            s = closes[col].dropna()
-            if len(s) < 50: continue
-            total += 1
-            sma50  = s.tail(50).mean()
-            above50  += int(s.iloc[-1] > sma50)
-            if len(s) >= 200:
-                sma200 = s.tail(200).mean()
-                above200 += int(s.iloc[-1] > sma200)
+    """
+    Breadth z 3-warstwowym cache:
+      1. RAM (1h)         — najszybsze
+      2. Disk (4h)        — przeżyje restart
+      3. yfinance recompute — rzadko
+    Fallback: stary disk cache jeśli yfinance crashuje.
+    """
+    # Layer 1: RAM
+    entry = _cache.get("breadth")
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["data"]
 
-        pct50  = round(above50  / total * 100, 1) if total else 50.0
-        pct200 = round(above200 / total * 100, 1) if total else 50.0
-        return {"pct_above_sma50": pct50, "pct_above_sma200": pct200, "sample_size": total}
+    # Layer 2: Disk
+    disk = state_store.load("breadth")
+    if disk and time.time() - disk.get("computed_at", 0) < BREADTH_DISK_TTL:
+        _cache["breadth"] = {"data": disk, "ts": time.time()}
+        return disk
 
-    return _cached("breadth", compute, ttl=3600)
+    # Layer 3: Recompute z timeoutem przez wątek
+    result = _run_with_timeout(_breadth_compute, timeout=20.0)
+    if result is not None:
+        state_store.save("breadth", result)
+        _cache["breadth"] = {"data": result, "ts": time.time()}
+        return result
+
+    # Fallback: stary disk cache (nawet wygasły)
+    if disk:
+        logger.warning("Breadth recompute timeout — używam wygasłego disk cache")
+        return disk
+
+    # Ostatnia deska ratunku — neutralne wartości
+    logger.error("Breadth: brak cache, recompute timeout — neutralne")
+    return {"pct_above_sma50": 50.0, "pct_above_sma200": 50.0, "sample_size": 0, "computed_at": 0}
+
+
+def _run_with_timeout(fn, timeout: float):
+    """Uruchom fn w wątku z timeoutem. Zwróć wynik albo None."""
+    result_box: list = [None]
+    err_box: list = [None]
+
+    def runner():
+        try:
+            result_box[0] = fn()
+        except Exception as e:
+            err_box[0] = e
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        logger.warning(f"_run_with_timeout: {fn.__name__} hit {timeout}s timeout")
+        return None
+    if err_box[0]:
+        logger.error(f"_run_with_timeout: {fn.__name__} error: {err_box[0]}")
+        return None
+    return result_box[0]
 
 
 # ─── 3. Statystyczne ─────────────────────────────────────────────
@@ -411,14 +477,35 @@ def _risk_score(vol: dict, breadth: dict, stat: dict, sentiment: dict, cross: di
 
 # ─── Publiczne API ────────────────────────────────────────────────
 
+def _safe_cached(key: str, fn, ttl: int, fallback: dict, timeout: float = 15.0) -> dict:
+    """Cached + timeout + fallback do ostatniej zapisanej wartości na dysku."""
+    entry = _cache.get(key)
+    if entry and time.time() - entry["ts"] < ttl:
+        return entry["data"]
+
+    result = _run_with_timeout(fn, timeout)
+    if result is not None:
+        _cache[key] = {"data": result, "ts": time.time()}
+        state_store.save(f"quant_{key}", {"data": result, "ts": time.time()})
+        return result
+
+    # Fallback: dysk
+    disk = state_store.load(f"quant_{key}")
+    if disk and isinstance(disk.get("data"), dict):
+        logger.warning(f"Quant {key} timeout — używam disk cache")
+        return disk["data"]
+    logger.error(f"Quant {key} brak cache i timeout — fallback")
+    return fallback
+
+
 def get_quant_snapshot() -> dict:
-    """Pełny snapshot wskaźników kwantowych."""
+    """Pełny snapshot wskaźników kwantowych. Każdy z 5 modułów ma własny timeout."""
     logger.info("Computing quant snapshot...")
-    vol       = _cached("vol",   _volatility_snapshot,  300)
-    breadth   = _cached("breadth", _breadth_snapshot,  3600)
-    stat      = _cached("stat",  _statistical_snapshot, 300)
-    sentiment = _cached("sent",  _sentiment_snapshot,   300)
-    cross     = _cached("cross", _crossmarket_snapshot, 300)
+    vol     = _safe_cached("vol",  _volatility_snapshot,  300, fallback={"vix": None, "vix_regime": "UNKNOWN", "vix_term_structure": "UNKNOWN"})
+    breadth = _breadth_snapshot()  # już ma własny timeout + 3-warstwowy cache
+    stat    = _safe_cached("stat", _statistical_snapshot, 300, fallback={"z_score_50d": 0.0, "z_score_200d": 0.0, "hurst_exponent": 0.5})
+    sentiment = _cached("sent",   _sentiment_snapshot,   300)
+    cross   = _safe_cached("cross", _crossmarket_snapshot, 300, fallback={"corr_sp500_tlt_30d": None, "credit_spread_30d": None, "dxy_change_20d": None})
 
     score, signal = _risk_score(vol, breadth, stat, sentiment, cross)
 
