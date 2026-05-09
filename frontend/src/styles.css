@@ -2040,9 +2040,12 @@ html, body, #root {
     font-size: 13px;
   }
 
-  /* Treść widoków */
+  /* Treść widoków — scroll na mobile zamiast overflow:hidden */
   .app-content {
     padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
   }
   .view-wrapper {
     padding: var(--gap-sm);
@@ -2052,16 +2055,17 @@ html, body, #root {
     padding: 0;
   }
 
-  /* Toolbar wykresu */
+  /* Toolbar wykresu — flex-shrink:0 zapobiega wciskaniu pod regime panel */
   .chart-toolbar {
     padding: var(--gap-sm);
     gap: var(--gap-sm);
-    overflow-x: auto;
     flex-wrap: wrap;
+    flex-shrink: 0;
   }
   .toolbar-left {
     flex-wrap: wrap;
     gap: var(--gap-sm);
+    width: 100%;
   }
   .toolbar-group {
     flex-wrap: wrap;
@@ -2075,8 +2079,15 @@ html, body, #root {
     font-size: 10px;
   }
 
-  /* Wykres — niższy na mobile */
+  /* Regime panel — też flex-shrink:0 */
+  .regime-panel {
+    flex-shrink: 0;
+  }
+
+  /* Wykres — fixed height na mobile, nie flex */
   .chart-container {
+    flex: none;
+    flex-shrink: 0;
     min-height: 320px;
     height: 50vh;
   }
