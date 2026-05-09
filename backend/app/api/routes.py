@@ -465,3 +465,66 @@ def health_check():
         "version": "0.1.0",
         "app": "swing.io",
     }
+
+
+@router.get("/_debug/quant")
+def debug_quant():
+    """Diagnostyka stanu quant cache."""
+    import time as _time
+    from app.services import quant_service
+    now = _time.time()
+    ram_cache = {
+        k: {
+            "age_s": round(now - v["ts"], 1),
+            "has_data": bool(v.get("data")),
+        }
+        for k, v in quant_service._cache.items()
+    }
+    disk_keys = []
+    try:
+        for k in ["breadth", "quant_vol", "quant_stat", "quant_cross"]:
+            d = state_store.load(k)
+            if d is not None:
+                disk_keys.append({
+                    "key": k,
+                    "computed_at_age_s": round(now - d.get("computed_at", d.get("ts", 0)), 1) if isinstance(d, dict) else "n/a",
+                })
+    except Exception as e:
+        disk_keys = [{"error": str(e)}]
+    return {
+        "ram_cache_keys": list(quant_service._cache.keys()),
+        "ram_cache":      ram_cache,
+        "disk_cache":     disk_keys,
+        "state_dir":      str(state_store._STATE_DIR),
+        "state_dir_exists": state_store._STATE_DIR.exists(),
+        "compute_locks":  list(quant_service._cache_compute_locks.keys()),
+    }
+
+
+@router.get("/_debug/quant/test")
+def debug_quant_test():
+    """Wymuś nowy snapshot z timing per-module."""
+    import time as _time
+    from app.services import quant_service as q
+    timings = {}
+    results = {}
+    for name, fn in [
+        ("vol",   q._volatility_snapshot),
+        ("stat",  q._statistical_snapshot),
+        ("cross", q._crossmarket_snapshot),
+    ]:
+        t0 = _time.time()
+        try:
+            r = q._run_with_timeout(fn, timeout=10.0)
+            timings[name] = round(_time.time() - t0, 2)
+            results[name] = "OK" if r else "TIMEOUT"
+        except Exception as e:
+            timings[name] = round(_time.time() - t0, 2)
+            results[name] = f"ERROR: {e}"
+
+    t0 = _time.time()
+    breadth_result = q._run_with_timeout(q._breadth_compute, timeout=15.0)
+    timings["breadth"] = round(_time.time() - t0, 2)
+    results["breadth"] = "OK" if breadth_result else "TIMEOUT"
+
+    return {"timings_s": timings, "results": results}
