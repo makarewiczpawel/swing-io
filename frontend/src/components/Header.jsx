@@ -21,6 +21,10 @@ export default function Header() {
 
       {quote && !loading && (
         <div className="quote-bar">
+          <div className="quote-instrument">
+            <span className="quote-instrument-label">S&P 500</span>
+          </div>
+
           <span className="quote-price">
             {quote.price.toLocaleString("en-US", {
               minimumFractionDigits: 2,
