@@ -27,3 +27,6 @@ frontend/dist/
 
 # Claude Code local settings
 .claude/
+
+# State store (lokalny cache, nie commitować)
+backend/.state/
