@@ -129,6 +129,20 @@ html, body, #root {
   font-size: 13px;
 }
 
+.quote-instrument {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.quote-instrument-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
 .quote-price {
   font-size: 20px;
   font-weight: 700;
@@ -381,17 +395,18 @@ html, body, #root {
 .regime-panel {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   padding: 8px var(--gap-lg);
   border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent;
   background: var(--bg-secondary);
-  transition: background 0.2s ease;
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 
 .regime-loading {
   color: var(--text-muted);
   font-size: 12px;
+  font-family: var(--font-mono);
 }
 
 .regime-header {
@@ -405,6 +420,7 @@ html, body, #root {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  transition: box-shadow 0.3s ease;
 }
 
 .regime-label {
@@ -412,30 +428,72 @@ html, body, #root {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.regime-conf-track {
+  flex: 1;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.regime-conf-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+  opacity: 0.8;
 }
 
 .regime-confidence {
   font-size: 11px;
   color: var(--text-muted);
   font-family: var(--font-mono);
-}
-
-.regime-description {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
+  flex-shrink: 0;
+  min-width: 28px;
+  text-align: right;
 }
 
 .regime-stats {
   display: flex;
-  gap: var(--gap-lg);
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.regime-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
   font-size: 11px;
-  color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
-.regime-stats strong {
+.regime-stat-key {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.regime-stat-chip strong {
   color: var(--text-primary);
+  font-weight: 600;
+}
+
+.regime-description-inline {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-left: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 /* ─── App Navigation ─────────────────────────────────────────── */
@@ -447,6 +505,20 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
   padding: 0 var(--gap-lg);
   flex-shrink: 0;
+  position: relative;
+}
+
+/* Wskazanie że jest więcej zakładek (mobile) */
+.app-nav::after {
+  content: "";
+  position: sticky;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  flex-shrink: 0;
+  background: linear-gradient(to left, var(--bg-secondary) 30%, transparent);
+  pointer-events: none;
 }
 
 .nav-tab {
@@ -1904,7 +1976,10 @@ html, body, #root {
     display: none;
   }
   .quote-price {
-    font-size: 14px;
+    font-size: 16px;
+  }
+  .quote-instrument-label {
+    font-size: 9px;
   }
 
   /* Nawigacja — scrollowalna pozioma */
@@ -1914,12 +1989,21 @@ html, body, #root {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     flex-wrap: nowrap;
+    padding: 0 var(--gap-sm);
   }
   .app-nav::-webkit-scrollbar { display: none; }
   .nav-tab {
     flex-shrink: 0;
     padding: 10px 14px;
     font-size: 13px;
+  }
+
+  /* Regime panel — bardziej kompaktowy */
+  .regime-panel {
+    padding: 6px var(--gap-md);
+  }
+  .regime-description-inline {
+    display: none;
   }
 
   /* Treść widoków */
