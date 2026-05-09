@@ -2,8 +2,37 @@ import CandlestickChart from "../components/CandlestickChart";
 import InfoPanel from "../components/InfoPanel";
 import RegimePanel from "../components/RegimePanel";
 import IndicatorToggles from "../components/IndicatorToggles";
-import { useCandles, useIndicators, useRegime } from "../hooks/useMarketData";
-import { useState } from "react";
+import { useCandles, useIndicators, useRegime, useSignals } from "../hooks/useMarketData";
+import { useState, useMemo } from "react";
+
+// Mapuj historię sygnałów BUY/SELL na markery do wykresu.
+// Snapuje czas sygnału do najbliższej świecy (bo lightweight-charts wymaga match).
+function buildSignalMarkers(signals, candles) {
+  if (!signals?.length || !candles?.length) return [];
+  const candleTimes = candles.map((c) => c.timestamp);
+  const findClosest = (t) => {
+    let best = candleTimes[0], bestDiff = Math.abs(candleTimes[0] - t);
+    for (const ct of candleTimes) {
+      const d = Math.abs(ct - t);
+      if (d < bestDiff) { best = ct; bestDiff = d; }
+    }
+    return best;
+  };
+  return signals
+    .filter((s) => s.signal === "BUY" || s.signal === "SELL")
+    .map((s) => {
+      const t = Math.floor(new Date(s.timestamp).getTime() / 1000);
+      const isBuy = s.signal === "BUY";
+      return {
+        time: findClosest(t),
+        position: isBuy ? "belowBar" : "aboveBar",
+        color: isBuy ? "#10b981" : "#ef4444",
+        shape: isBuy ? "arrowUp" : "arrowDown",
+        text: `${s.signal} ${s.confidence ?? ""}%`,
+        size: 2,
+      };
+    });
+}
 
 const INTERVALS = [
   { id: "4h", label: "4H", days: 60 },
@@ -31,6 +60,12 @@ export default function DashboardView() {
   const { data, loading, error, refetch } = useCandles(interval, days);
   const { data: indicators } = useIndicators(interval, days);
   const { regime, loading: regimeLoading } = useRegime(interval);
+  const { signals } = useSignals();
+
+  const signalMarkers = useMemo(
+    () => buildSignalMarkers(signals, data?.candles),
+    [signals, data?.candles]
+  );
 
   const toggleIndicator = (key) =>
     setActiveIndicators((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -87,6 +122,7 @@ export default function DashboardView() {
             indicators={indicators}
             activeIndicators={activeIndicators}
             interval={interval}
+            signalMarkers={signalMarkers}
           />
         )}
       </div>

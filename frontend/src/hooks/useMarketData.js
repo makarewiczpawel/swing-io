@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getCandles, getQuote, getMarketInfo, getIndicators, getRegime } from "../api/client";
+import { getCandles, getQuote, getMarketInfo, getIndicators, getRegime, getSignals } from "../api/client";
 
 /**
  * Hook do pobierania świec S&P 500.
@@ -103,6 +103,33 @@ export function useIndicators(interval = "1D", days = 365) {
   }, [fetchData]);
 
   return { data, loading, error, refetch: fetchData };
+}
+
+/**
+ * Hook do pobierania historii sygnałów AI (do nakładania markerów na wykresie).
+ */
+export function useSignals(refreshMs = 5 * 60 * 1000) {
+  const [signals, setSignals] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchSignals = useCallback(async () => {
+    try {
+      const result = await getSignals();
+      setSignals(result.signals || []);
+    } catch (err) {
+      console.error("Signals fetch error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSignals();
+    const t = setInterval(fetchSignals, refreshMs);
+    return () => clearInterval(t);
+  }, [fetchSignals, refreshMs]);
+
+  return { signals, loading, refetch: fetchSignals };
 }
 
 export function useRegime(interval = "1D") {

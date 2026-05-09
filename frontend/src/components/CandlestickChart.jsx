@@ -8,7 +8,7 @@ const INDICATOR_COLORS = {
   ema21:  "#ec4899",
 };
 
-export default function CandlestickChart({ candles, indicators, activeIndicators, interval, srLevels, patternMarkers }) {
+export default function CandlestickChart({ candles, indicators, activeIndicators, interval, srLevels, patternMarkers, signalMarkers }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
@@ -183,13 +183,11 @@ export default function CandlestickChart({ candles, indicators, activeIndicators
     });
   }, [srLevels]);
 
-  // Pattern markers
+  // Markers — merge patternMarkers + signalMarkers
   useEffect(() => {
-    if (!candleSeriesRef.current || !patternMarkers?.length) {
-      candleSeriesRef.current?.setMarkers?.([]);
-      return;
-    }
-    const markers = patternMarkers
+    if (!candleSeriesRef.current) return;
+
+    const patternList = (patternMarkers || [])
       .filter((m) => m.strength >= 2)
       .map((m) => ({
         time: m.time,
@@ -199,10 +197,15 @@ export default function CandlestickChart({ candles, indicators, activeIndicators
         text: m.type.replace(/_/g, " "),
         size: m.strength === 3 ? 2 : 1,
       }));
+
+    const signalList = signalMarkers || [];
+
+    const merged = [...patternList, ...signalList].sort((a, b) => a.time - b.time);
+
     try {
-      candleSeriesRef.current.setMarkers(markers);
+      candleSeriesRef.current.setMarkers(merged);
     } catch (_) {}
-  }, [patternMarkers]);
+  }, [patternMarkers, signalMarkers]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
