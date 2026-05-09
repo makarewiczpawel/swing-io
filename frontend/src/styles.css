@@ -1365,7 +1365,8 @@ html, body, #root {
 }
 
 .pat-chart-wrapper {
-  height: 480px;
+  height: calc(100vh - 220px);
+  min-height: 420px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

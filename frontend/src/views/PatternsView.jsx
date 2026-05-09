@@ -1,10 +1,38 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { getPatterns, getCandles } from "../api/client";
 import CandlestickChart from "../components/CandlestickChart";
 import PatternList from "../components/patterns/PatternList";
 import SRPanel from "../components/patterns/SRPanel";
 import PriceActionPanel from "../components/patterns/PriceActionPanel";
 import DivBreakoutPanel from "../components/patterns/DivBreakoutPanel";
+import { useSignals } from "../hooks/useMarketData";
+
+function buildSignalMarkers(signals, candles) {
+  if (!signals?.length || !candles?.length) return [];
+  const candleTimes = candles.map((c) => c.timestamp);
+  const findClosest = (t) => {
+    let best = candleTimes[0], bestDiff = Math.abs(candleTimes[0] - t);
+    for (const ct of candleTimes) {
+      const d = Math.abs(ct - t);
+      if (d < bestDiff) { best = ct; bestDiff = d; }
+    }
+    return best;
+  };
+  return signals
+    .filter((s) => s.signal === "BUY" || s.signal === "SELL")
+    .map((s) => {
+      const t = Math.floor(new Date(s.timestamp).getTime() / 1000);
+      const isBuy = s.signal === "BUY";
+      return {
+        time: findClosest(t),
+        position: isBuy ? "belowBar" : "aboveBar",
+        color: isBuy ? "#10b981" : "#ef4444",
+        shape: isBuy ? "arrowUp" : "arrowDown",
+        text: `${s.signal} ${s.confidence ?? ""}%`,
+        size: 2,
+      };
+    });
+}
 
 const INTERVALS = ["1D", "4h", "1h"];
 const DAY_OPTIONS = [90, 180, 365];
@@ -30,6 +58,8 @@ export default function PatternsView() {
   }, [interval, days]);
 
   const currentPrice = candles.length ? candles[candles.length - 1].close : null;
+  const { signals } = useSignals();
+  const signalMarkers = useMemo(() => buildSignalMarkers(signals, candles), [signals, candles]);
 
   return (
     <div className="pat-view">
@@ -72,6 +102,7 @@ export default function PatternsView() {
           interval={interval}
           srLevels={data?.support_resistance}
           patternMarkers={data?.candle_patterns}
+          signalMarkers={signalMarkers}
         />
       </div>
 
