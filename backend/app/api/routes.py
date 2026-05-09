@@ -422,7 +422,7 @@ def set_alerts_config(body: dict):
 
 @router.post("/alerts/test")
 def test_alert():
-    """Wyślij testowy email."""
+    """Wyślij testowy email synchronicznie — pokaż faktyczny wynik SMTP."""
     mock_result = {
         "id": "test", "timestamp": datetime.now().isoformat(),
         "signal": "BUY", "confidence": 72,
@@ -432,8 +432,24 @@ def test_alert():
         "reasoning": "To jest testowy alert z swing.io.",
         "key_factors": ["Test alertu", "Konfiguracja SMTP"],
     }
-    sent = email_service.send_signal_alert(mock_result)
-    return {"sent": sent}
+    settings = get_settings()
+    if not settings.alerts_enabled:
+        return {"sent": False, "reason": "Alerty wyłączone (ALERTS_ENABLED=false)"}
+    missing = [k for k, v in [
+        ("SMTP_HOST", settings.smtp_host),
+        ("SMTP_USER", settings.smtp_user),
+        ("SMTP_PASSWORD", settings.smtp_password),
+        ("ALERT_RECIPIENT", settings.alert_recipient),
+    ] if not v]
+    if missing:
+        return {"sent": False, "reason": f"Brak konfiguracji: {', '.join(missing)}"}
+    sent = email_service.send_signal_alert(mock_result, in_background=False)
+    return {
+        "sent": sent,
+        "recipient": settings.alert_recipient,
+        "smtp_user": settings.smtp_user,
+        "smtp_host": f"{settings.smtp_host}:{settings.smtp_port}",
+    }
 
 
 @router.get("/health")
