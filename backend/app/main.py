@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import get_settings
+from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 
 # Logging
@@ -35,6 +36,20 @@ app.add_middleware(
 
 # Routy
 app.include_router(router)
+
+# Scheduler — automatyczna analiza co 4h w dni robocze
+def _scheduled_analysis():
+    from app.services.agent_service import run_analysis
+    logger = logging.getLogger("scheduler")
+    try:
+        result = run_analysis(interval="1D")
+        logger.info(f"Scheduled analysis done: {result.get('signal')} confidence={result.get('confidence')}")
+    except Exception as e:
+        logger.error(f"Scheduled analysis failed: {e}")
+
+scheduler = BackgroundScheduler(timezone="America/New_York")
+scheduler.add_job(_scheduled_analysis, "cron", day_of_week="mon-fri", hour="10,14,18", minute=5)
+scheduler.start()
 
 
 @app.get("/")
