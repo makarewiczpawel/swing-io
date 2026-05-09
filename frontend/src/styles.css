@@ -1839,27 +1839,296 @@ html, body, #root {
 
 /* ─── Responsive ─────────────────────────────────────────────── */
 
+/* Tablet i mniejsze ekrany */
+@media (max-width: 1024px) {
+  .backtest-layout,
+  .sig-layout,
+  .pat-panels,
+  .perf-feedback-row,
+  .perf-bottom-config,
+  .perf-bottom-row,
+  .perf-charts-row,
+  .quant-charts-row,
+  .quant-stats-grid,
+  .quant-charts-3col {
+    grid-template-columns: 1fr;
+  }
+  .backtest-sidebar {
+    position: static;
+    width: 100%;
+  }
+  .perf-metrics-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .bt-metrics-grid,
+  .bt-wf-summary,
+  .quant-cross-grid,
+  .quant-top-row,
+  .sig-analysts-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sig-levels {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Telefon (do 768px) */
 @media (max-width: 768px) {
+  html, body, #root {
+    font-size: 13px;
+  }
+
+  .app-layout {
+    height: 100vh;
+    height: 100dvh; /* dynamic viewport — uwzględnia mobile address bar */
+  }
+
+  /* Header */
   .app-header {
     padding: 0 var(--gap-md);
-    height: 48px;
+    height: 52px;
+    gap: var(--gap-sm);
   }
-
+  .app-logo-text {
+    font-size: 15px;
+  }
+  .app-logo-icon {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+  }
   .quote-bar {
-    gap: var(--gap-md);
+    gap: var(--gap-sm);
   }
-
   .quote-detail {
     display: none;
   }
-
-  .chart-toolbar {
-    padding: var(--gap-sm) var(--gap-md);
-    overflow-x: auto;
+  .quote-price {
+    font-size: 14px;
   }
 
+  /* Nawigacja — scrollowalna pozioma */
+  .app-nav {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .app-nav::-webkit-scrollbar { display: none; }
+  .nav-tab {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  /* Treść widoków */
+  .app-content {
+    padding: 0;
+  }
+  .view-wrapper {
+    padding: var(--gap-sm);
+    gap: var(--gap-sm);
+  }
+  .view-wrapper-chat {
+    padding: 0;
+  }
+
+  /* Toolbar wykresu */
+  .chart-toolbar {
+    padding: var(--gap-sm);
+    gap: var(--gap-sm);
+    overflow-x: auto;
+    flex-wrap: wrap;
+  }
+  .toolbar-left {
+    flex-wrap: wrap;
+    gap: var(--gap-sm);
+  }
+  .toolbar-group {
+    flex-wrap: wrap;
+  }
+  .toolbar-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+    min-height: 36px;
+  }
+  .toolbar-label {
+    font-size: 10px;
+  }
+
+  /* Wykres — niższy na mobile */
+  .chart-container {
+    min-height: 320px;
+    height: 50vh;
+  }
+
+  /* Info / regime panel */
   .info-panel {
     grid-template-columns: repeat(2, 1fr);
+    padding: var(--gap-sm);
+    gap: var(--gap-sm);
+  }
+  .regime-panel {
     padding: var(--gap-sm) var(--gap-md);
+  }
+  .regime-stats {
+    flex-wrap: wrap;
+    gap: var(--gap-sm);
+  }
+
+  /* Quant — wszystko 1 kolumna */
+  .quant-charts-row,
+  .quant-charts-3col,
+  .quant-stats-grid,
+  .quant-cross-grid,
+  .quant-top-row {
+    grid-template-columns: 1fr;
+  }
+  .quant-card {
+    padding: var(--gap-sm);
+  }
+
+  /* Performance */
+  .perf-metrics-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--gap-sm);
+  }
+  .perf-metric-card {
+    padding: var(--gap-sm);
+  }
+  .perf-metric-value {
+    font-size: 16px;
+  }
+  .perf-charts-row,
+  .perf-bottom-row,
+  .perf-bottom-config,
+  .perf-feedback-row {
+    grid-template-columns: 1fr;
+    gap: var(--gap-md);
+  }
+  .perf-open-banner {
+    flex-wrap: wrap;
+    gap: var(--gap-sm);
+  }
+
+  /* Tabela transakcji — scroll horyzontalny */
+  .perf-trades-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .perf-trades-table {
+    min-width: 560px;
+  }
+
+  /* Sygnały AI — kompaktowy wiersz historii (5 kolumn z mniejszymi szerokościami) */
+  .sig-hist-row {
+    grid-template-columns: 48px 32px 48px 36px 1fr;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .sig-layout,
+  .sig-levels,
+  .sig-analysts-grid {
+    grid-template-columns: 1fr;
+  }
+  .sig-hist-detail {
+    padding: var(--gap-sm);
+    font-size: 12px;
+  }
+  .pat-panels {
+    grid-template-columns: 1fr;
+  }
+  .quant-top-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Backtest */
+  .backtest-layout {
+    grid-template-columns: 1fr;
+  }
+  .backtest-sidebar {
+    position: static;
+    width: 100%;
+    max-height: none;
+  }
+  .bt-date-grid {
+    grid-template-columns: 1fr;
+  }
+  .bt-form-section {
+    padding: var(--gap-sm);
+  }
+
+  /* Formacje */
+  .pat-chart-wrapper {
+    height: 320px;
+  }
+  .pat-list {
+    padding: var(--gap-sm);
+  }
+  .pat-toolbar {
+    flex-wrap: wrap;
+  }
+
+  /* Chat */
+  .chat-view {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+  .chat-bubble.user {
+    max-width: 90%;
+  }
+  .chat-input-row {
+    padding: var(--gap-sm);
+    gap: var(--gap-sm);
+  }
+  .chat-input {
+    font-size: 14px; /* >= 16px zapobiega zoomowi w iOS, ale 14 też OK */
+  }
+  .chat-send-btn {
+    padding: 10px 14px;
+  }
+
+  /* Inputy / przyciski touch-friendly */
+  input,
+  textarea,
+  select,
+  button {
+    font-size: 14px;
+  }
+  .perf-capital-input,
+  .bt-input,
+  .bt-select {
+    min-height: 40px;
+    font-size: 14px;
+  }
+}
+
+/* Mały telefon (do 480px) */
+@media (max-width: 480px) {
+  .app-logo-text {
+    display: none; /* zostaje tylko ikona */
+  }
+  .perf-metrics-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .info-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+  .toolbar-btn {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .nav-tab {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .chart-container {
+    min-height: 260px;
+    height: 45vh;
+  }
+  .chat-bubble.user {
+    max-width: 95%;
   }
 }
