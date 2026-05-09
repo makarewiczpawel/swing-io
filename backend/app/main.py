@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import get_settings
-from app.services import state_store, performance_service, agent_service
+from app.services import state_store, performance_service, agent_service, quant_service
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 
@@ -53,7 +53,9 @@ def _startup():
         if cfg.get("smtp_password"):
             os.environ["SMTP_PASSWORD"] = cfg["smtp_password"]
         get_settings.cache_clear()
-        log.info("State + alerts config loaded")
+        # Odpal quant warmup w tle (nie blokuje healthcheck-a)
+        quant_service.warmup_async()
+        log.info("State + alerts config loaded; quant warmup queued")
     except Exception as e:
         log.error(f"Startup state load failed: {e}")
 

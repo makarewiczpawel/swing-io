@@ -498,14 +498,22 @@ def _safe_cached(key: str, fn, ttl: int, fallback: dict, timeout: float = 15.0) 
     return fallback
 
 
+_VOL_FALLBACK   = {"vix": None, "vix_regime": "UNKNOWN", "vix_term_structure": "UNKNOWN"}
+_STAT_FALLBACK  = {"z_score_50d": 0.0, "z_score_200d": 0.0, "hurst_exponent": 0.5}
+_CROSS_FALLBACK = {"corr_sp500_tlt_30d": None, "credit_spread_30d": None, "dxy_change_20d": None}
+
+# Krótszy timeout — yfinance jak ma odpowiedzieć, to w 5-8s; dłużej = i tak nie odpowie.
+_QUANT_TIMEOUT = 8.0
+
+
 def get_quant_snapshot() -> dict:
-    """Pełny snapshot wskaźników kwantowych. Każdy z 5 modułów ma własny timeout."""
+    """Pełny snapshot wskaźników kwantowych. Każdy z 5 modułów ma timeout 8s + fallback."""
     logger.info("Computing quant snapshot...")
-    vol     = _safe_cached("vol",  _volatility_snapshot,  300, fallback={"vix": None, "vix_regime": "UNKNOWN", "vix_term_structure": "UNKNOWN"})
-    breadth = _breadth_snapshot()  # już ma własny timeout + 3-warstwowy cache
-    stat    = _safe_cached("stat", _statistical_snapshot, 300, fallback={"z_score_50d": 0.0, "z_score_200d": 0.0, "hurst_exponent": 0.5})
-    sentiment = _cached("sent",   _sentiment_snapshot,   300)
-    cross   = _safe_cached("cross", _crossmarket_snapshot, 300, fallback={"corr_sp500_tlt_30d": None, "credit_spread_30d": None, "dxy_change_20d": None})
+    vol     = _safe_cached("vol",   _volatility_snapshot,  300, fallback=_VOL_FALLBACK,   timeout=_QUANT_TIMEOUT)
+    breadth = _breadth_snapshot()
+    stat    = _safe_cached("stat",  _statistical_snapshot, 300, fallback=_STAT_FALLBACK,  timeout=_QUANT_TIMEOUT)
+    sentiment = _cached("sent",     _sentiment_snapshot,   300)
+    cross   = _safe_cached("cross", _crossmarket_snapshot, 300, fallback=_CROSS_FALLBACK, timeout=_QUANT_TIMEOUT)
 
     score, signal = _risk_score(vol, breadth, stat, sentiment, cross)
 
@@ -546,3 +554,16 @@ def get_zscore_history(days: int = 252) -> dict:
 
 def get_correlations_history(days: int = 252) -> dict:
     return _cached(f"corr_hist_{days}", lambda: _correlations_history(days), 300)
+
+
+def warmup_async() -> None:
+    """Odpal pełny snapshot w tle żeby zapełnić cache po starcie. Nie blokuje."""
+    def _run():
+        try:
+            time.sleep(2)
+            logger.info("Quant warmup: starting...")
+            get_quant_snapshot()
+            logger.info("Quant warmup: done")
+        except Exception as e:
+            logger.error(f"Quant warmup failed: {e}")
+    threading.Thread(target=_run, daemon=True).start()
