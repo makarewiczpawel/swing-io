@@ -3,7 +3,7 @@ import { useQuote } from "../hooks/useMarketData";
 /**
  * Header z logo i bieżącą ceną S&P 500.
  */
-export default function Header() {
+export default function Header({ onLogout = null }) {
   const { quote, loading } = useQuote(60000);
 
   const isUp = quote && quote.change >= 0;
@@ -77,6 +77,12 @@ export default function Header() {
             Loading...
           </span>
         </div>
+      )}
+
+      {onLogout && (
+        <button className="header-logout-btn" onClick={onLogout} title="Wyloguj">
+          Wyloguj
+        </button>
       )}
     </header>
   );

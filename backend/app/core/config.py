@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # Comma-separated list of allowed origins (for production multi-domain)
     frontend_urls: str = ""
 
+    # Auth — jeśli ustawione, dostęp do API wymaga zalogowania
+    app_password: str = ""
+
     # Finnhub
     finnhub_api_key: str = ""
 

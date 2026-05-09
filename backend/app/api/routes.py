@@ -25,6 +25,7 @@ from app.services.performance_service import (
 )
 from app.services import email_service, state_store
 from app.core.config import get_settings
+from app.core import auth
 from typing import Optional
 import uuid, logging
 from datetime import datetime
@@ -465,6 +466,25 @@ def health_check():
         "version": "0.1.0",
         "app": "swing.io",
     }
+
+
+@router.get("/auth/status")
+def auth_status():
+    """Czy backend wymaga logowania."""
+    return {"auth_required": auth.is_auth_enabled()}
+
+
+@router.post("/auth/login")
+def auth_login(body: dict):
+    """Zaloguj — przyjmuje hasło, zwraca token (TTL 7 dni)."""
+    password = (body.get("password") or "").strip()
+    if not password:
+        raise HTTPException(status_code=400, detail="Brak hasła")
+    if not auth.is_auth_enabled():
+        raise HTTPException(status_code=400, detail="Auth wyłączone — APP_PASSWORD nie ustawione")
+    if not auth.verify_password(password):
+        raise HTTPException(status_code=401, detail="Nieprawidłowe hasło")
+    return {"token": auth.make_token(), "ttl_days": 7}
 
 
 @router.get("/_debug/quant")

@@ -1,11 +1,32 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
+const TOKEN_KEY = "swing_token";
+
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+function _authHeaders() {
+  const t = getToken();
+  return t ? { "Authorization": `Bearer ${t}` } : {};
+}
+
+function _handle401(response) {
+  if (response.status === 401) {
+    clearToken();
+    // Force back to login screen
+    window.dispatchEvent(new CustomEvent("swing:auth-expired"));
+    throw new Error("Sesja wygasła — zaloguj się ponownie");
+  }
+}
+
 async function fetchJSON(endpoint, params = {}) {
   const url = new URL(endpoint, window.location.origin);
   Object.entries(params).forEach(([key, val]) => {
     if (val !== undefined && val !== null) url.searchParams.set(key, val);
   });
-  const response = await fetch(url);
+  const response = await fetch(url, { headers: _authHeaders() });
+  _handle401(response);
   if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText}`);
   return response.json();
 }
@@ -13,14 +34,40 @@ async function fetchJSON(endpoint, params = {}) {
 async function postJSON(endpoint, body = {}) {
   const response = await fetch(`${BASE_URL}${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ..._authHeaders() },
     body: JSON.stringify(body),
   });
+  _handle401(response);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.detail || `API Error: ${response.status}`);
   }
   return response.json();
+}
+
+export async function getAuthStatus() {
+  const r = await fetch(`${BASE_URL}/auth/status`);
+  if (!r.ok) throw new Error("Auth status check failed");
+  return r.json();
+}
+
+export async function login(password) {
+  const r = await fetch(`${BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail || `Login failed: ${r.status}`);
+  }
+  const { token } = await r.json();
+  setToken(token);
+  return token;
+}
+
+export function logout() {
+  clearToken();
 }
 
 export const getCandles    = (interval = "1D", days = 365) => fetchJSON(`${BASE_URL}/candles`,          { interval, days });

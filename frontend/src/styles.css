@@ -1837,6 +1837,124 @@ html, body, #root {
   gap: var(--gap-lg);
 }
 
+/* ─── Login screen ──────────────────────────────────────────── */
+
+.login-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  padding: var(--gap-md);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-xl);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+
+.login-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  margin-bottom: var(--gap-sm);
+}
+
+.login-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--text-bright);
+  margin: 0;
+}
+
+.login-title span {
+  color: var(--accent);
+}
+
+.login-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: var(--gap-lg);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+}
+
+.login-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  font-size: 15px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  outline: none;
+  transition: border-color 0.15s;
+  min-height: 44px;
+}
+
+.login-input:focus {
+  border-color: var(--accent);
+}
+
+.login-error {
+  padding: 8px 12px;
+  background: var(--red-bg);
+  color: var(--red-bright);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.login-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-height: 44px;
+}
+
+.login-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.login-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.header-logout-btn {
+  margin-left: var(--gap-md);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.header-logout-btn:hover {
+  border-color: var(--red);
+  color: var(--red-bright);
+}
+
 /* ─── Responsive ─────────────────────────────────────────────── */
 
 /* Tablet i mniejsze ekrany */

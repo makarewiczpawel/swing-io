@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Header from "./components/Header";
 import DashboardView from "./views/DashboardView";
 import BacktestView from "./views/BacktestView";
@@ -7,6 +7,8 @@ import PatternsView from "./views/PatternsView";
 import SignalsView from "./views/SignalsView";
 import ChatView from "./views/ChatView";
 import PerformanceView from "./views/PerformanceView";
+import LoginView from "./views/LoginView";
+import { getToken, getAuthStatus, logout as apiLogout } from "./api/client";
 
 const TABS = [
   { id: "dashboard",   label: "Dashboard" },
@@ -19,11 +21,46 @@ const TABS = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab]               = useState("dashboard");
+  const [authRequired, setAuthReq]  = useState(null); // null = unknown
+  const [isAuthed, setIsAuthed]     = useState(!!getToken());
+
+  // Sprawdź czy backend wymaga logowania
+  useEffect(() => {
+    getAuthStatus()
+      .then((s) => setAuthReq(s.auth_required))
+      .catch(() => setAuthReq(false));
+  }, []);
+
+  // Nasłuchuj na 401 z API → wymuś re-login
+  useEffect(() => {
+    const handler = () => setIsAuthed(false);
+    window.addEventListener("swing:auth-expired", handler);
+    return () => window.removeEventListener("swing:auth-expired", handler);
+  }, []);
+
+  const handleLogout = () => {
+    apiLogout();
+    setIsAuthed(false);
+  };
+
+  // Loading state
+  if (authRequired === null) {
+    return (
+      <div className="loading-state" style={{ height: "100vh" }}>
+        <div className="spinner" /> Ładowanie…
+      </div>
+    );
+  }
+
+  // Login screen
+  if (authRequired && !isAuthed) {
+    return <LoginView onSuccess={() => setIsAuthed(true)} />;
+  }
 
   return (
     <div className="app-layout">
-      <Header />
+      <Header onLogout={authRequired ? handleLogout : null} />
 
       <nav className="app-nav">
         {TABS.map((t) => (

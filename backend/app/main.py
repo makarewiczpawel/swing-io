@@ -1,10 +1,12 @@
 """swing.io — FastAPI Backend."""
 
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import get_settings
+from app.core import auth
 from app.services import state_store, performance_service, agent_service, quant_service
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
@@ -35,6 +37,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth middleware — jeśli APP_PASSWORD ustawione, /api/* wymaga Bearer token
+_PUBLIC_PATHS = {"/", "/api/health", "/api/auth/login", "/api/auth/status",
+                 "/docs", "/openapi.json", "/redoc"}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not auth.is_auth_enabled():
+        return await call_next(request)
+    # Public paths + CORS preflight
+    if request.url.path in _PUBLIC_PATHS or request.method == "OPTIONS":
+        return await call_next(request)
+    # Wymagaj Bearer
+    header = request.headers.get("authorization", "")
+    if not header.startswith("Bearer ") or not auth.verify_token(header[7:]):
+        return JSONResponse(status_code=401, content={"detail": "Brak autoryzacji"})
+    return await call_next(request)
 
 # Routy
 app.include_router(router)
