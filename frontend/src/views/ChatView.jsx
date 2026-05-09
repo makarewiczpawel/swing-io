@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { sendChat } from "../api/client";
 import { chatStore } from "../store/chatStore";
 
@@ -40,7 +42,13 @@ export default function ChatView() {
         {messages.map((m, i) => (
           <div key={i} className={`chat-bubble ${m.role}`}>
             <div className="chat-bubble-label">{m.role === "user" ? "Ty" : "Agent"}</div>
-            <div className="chat-bubble-text" style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+            {m.role === "assistant" ? (
+              <div className="chat-bubble-text chat-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+              </div>
+            ) : (
+              <div className="chat-bubble-text" style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+            )}
           </div>
         ))}
         {loading && (
