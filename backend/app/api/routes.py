@@ -435,14 +435,14 @@ def test_alert():
     settings = get_settings()
     if not settings.alerts_enabled:
         return {"sent": False, "reason": "Alerty wyłączone (ALERTS_ENABLED=false)"}
-    missing = [k for k, v in [
-        ("SMTP_HOST", settings.smtp_host),
-        ("SMTP_USER", settings.smtp_user),
-        ("SMTP_PASSWORD", settings.smtp_password),
-        ("ALERT_RECIPIENT", settings.alert_recipient),
-    ] if not v]
-    if missing:
-        return {"sent": False, "reason": f"Brak konfiguracji: {', '.join(missing)}"}
+    if not settings.alert_recipient:
+        return {"sent": False, "reason": "Brak ALERT_RECIPIENT"}
+
+    has_resend = bool(settings.resend_api_key)
+    has_smtp   = all([settings.smtp_host, settings.smtp_user, settings.smtp_password])
+    if not has_resend and not has_smtp:
+        return {"sent": False, "reason": "Brak konfiguracji: ustaw RESEND_API_KEY (preferowane) lub SMTP_HOST/USER/PASSWORD"}
+
     try:
         sent = email_service._send_sync(mock_result, raise_on_error=True)
         err = None
@@ -452,10 +452,8 @@ def test_alert():
     return {
         "sent": sent,
         "error": err,
+        "provider": "resend" if has_resend else "smtp",
         "recipient": settings.alert_recipient,
-        "smtp_user": settings.smtp_user,
-        "smtp_host": f"{settings.smtp_host}:{settings.smtp_port}",
-        "smtp_password_len": len((settings.smtp_password or "").replace(" ", "")),
     }
 
 

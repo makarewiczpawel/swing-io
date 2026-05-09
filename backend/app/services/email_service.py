@@ -10,6 +10,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 
+import httpx
+
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -30,14 +32,16 @@ def _fmt(val, suffix: str = "", precision: int = 2) -> str:
 def send_signal_alert(result: dict, in_background: bool = True) -> bool:
     """
     Wyślij email z nowym sygnałem.
-    in_background=True: SMTP w wątku — nie blokuje analizy. Zwraca True jeśli zakolejkowano.
-    in_background=False: synchronicznie. Zwraca True jeśli wysłano.
+    Preferuje Resend HTTPS API (działa na Railway). SMTP jako fallback.
     """
     settings = get_settings()
     if not settings.alerts_enabled:
         return False
-    if not all([settings.smtp_host, settings.smtp_user, settings.smtp_password, settings.alert_recipient]):
-        logger.warning("Email alerts: brak konfiguracji SMTP — pomijam")
+
+    has_resend = bool(settings.resend_api_key and settings.alert_recipient)
+    has_smtp   = all([settings.smtp_host, settings.smtp_user, settings.smtp_password, settings.alert_recipient])
+    if not has_resend and not has_smtp:
+        logger.warning("Email alerts: brak konfiguracji Resend/SMTP — pomijam")
         return False
 
     signal = result.get("signal", "HOLD")
@@ -53,33 +57,60 @@ def send_signal_alert(result: dict, in_background: bool = True) -> bool:
 def _send_sync(result: dict, raise_on_error: bool = False) -> bool:
     settings = get_settings()
     signal = result.get("signal", "HOLD")
+    subject = f"{SIGNAL_EMOJI.get(signal, '')} swing.io — Sygnał {signal} S&P 500"
+    body = _build_body(result)
+
     try:
-        subject = f"{SIGNAL_EMOJI.get(signal, '')} swing.io — Sygnał {signal} S&P 500"
-        body = _build_body(result)
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = settings.smtp_user
-        msg["To"]      = settings.alert_recipient
-        msg.attach(MIMEText(body, "html", "utf-8"))
-
-        # Hasło aplikacji Gmail może mieć spacje — usuń żeby ujednolicić
-        smtp_pwd = (settings.smtp_password or "").replace(" ", "")
-
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(settings.smtp_user, smtp_pwd)
-            server.sendmail(settings.smtp_user, settings.alert_recipient, msg.as_string())
-
-        logger.info(f"Alert email wysłany: {signal} → {settings.alert_recipient}")
-        return True
-
+        if settings.resend_api_key:
+            return _send_via_resend(settings, subject, body)
+        return _send_via_smtp(settings, subject, body)
     except Exception as e:
         logger.error(f"Błąd wysyłania emaila: {type(e).__name__}: {e}")
         if raise_on_error:
             raise
         return False
+
+
+def _send_via_resend(settings, subject: str, body: str) -> bool:
+    """Wyślij przez Resend HTTPS API — działa na Railway."""
+    resp = httpx.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {settings.resend_api_key}",
+            "Content-Type":  "application/json",
+        },
+        json={
+            "from":    settings.resend_from,
+            "to":      [settings.alert_recipient],
+            "subject": subject,
+            "html":    body,
+        },
+        timeout=15.0,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Resend HTTP {resp.status_code}: {resp.text[:200]}")
+    logger.info(f"Alert email wysłany (Resend) → {settings.alert_recipient}")
+    return True
+
+
+def _send_via_smtp(settings, subject: str, body: str) -> bool:
+    """Fallback SMTP — działa lokalnie, na Railway jest blokowane."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = settings.smtp_user
+    msg["To"]      = settings.alert_recipient
+    msg.attach(MIMEText(body, "html", "utf-8"))
+
+    smtp_pwd = (settings.smtp_password or "").replace(" ", "")
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+        server.ehlo()
+        server.starttls()
+        server.login(settings.smtp_user, smtp_pwd)
+        server.sendmail(settings.smtp_user, settings.alert_recipient, msg.as_string())
+
+    logger.info(f"Alert email wysłany (SMTP) → {settings.alert_recipient}")
+    return True
 
 
 def _build_body(result: dict) -> str:

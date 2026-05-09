@@ -20,7 +20,10 @@ class Settings(BaseSettings):
     # S&P 500 ticker
     sp500_ticker: str = "^GSPC"
 
-    # Email alerts
+    # Email alerts — preferowany Resend (HTTPS API, działa na Railway)
+    resend_api_key: str = ""
+    resend_from: str = "swing.io <onboarding@resend.dev>"  # default test sender
+    # SMTP fallback (Railway blokuje wychodzący SMTP — działa tylko lokalnie)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
