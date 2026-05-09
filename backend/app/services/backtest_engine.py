@@ -465,12 +465,16 @@ def run_walk_forward(
     interval: str = "1D",
     params: dict | None = None,
     initial_capital: float = INITIAL_CAPITAL,
+    commission_pct: float = 0.1,
+    slippage_pct: float = 0.05,
 ) -> dict:
     """Walk-forward testing — 7 rund przesuwającego się okna."""
     if strategy not in STRATEGIES:
         raise ValueError(f"Nieznana strategia: {strategy}")
 
     params = params or STRATEGIES[strategy]["default_params"].copy()
+    commission = commission_pct / 100
+    slippage   = slippage_pct / 100
 
     # Fetch raz — pokrywa cały zakres 2010–2025
     df_all = _fetch_df("2010-01-01", "2026-01-01", interval)
@@ -487,8 +491,8 @@ def run_walk_forward(
             df_te = df_all[te]
 
             max_hold = int(params["hold_bars"]) if "hold_bars" in params else None
-            tr_trades, tr_eq = _simulate(df_tr, _signals(df_tr, strategy, params), initial_capital, max_hold_bars=max_hold)
-            te_trades, te_eq = _simulate(df_te, _signals(df_te, strategy, params), initial_capital, max_hold_bars=max_hold)
+            tr_trades, tr_eq = _simulate(df_tr, _signals(df_tr, strategy, params), initial_capital, commission, slippage, max_hold)
+            te_trades, te_eq = _simulate(df_te, _signals(df_te, strategy, params), initial_capital, commission, slippage, max_hold)
             tr_m = _metrics(tr_trades, tr_eq, initial_capital)
             te_m = _metrics(te_trades, te_eq, initial_capital)
 

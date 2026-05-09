@@ -17,6 +17,7 @@ import numpy as np
 import yfinance as yf
 import ta
 import logging
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -31,18 +32,28 @@ SP500_PROXY = [
     "MCD","RTX","HON","LOW","CAT","SPGI","GS","AXP","BKNG","AMGN",
 ]
 
-# Prosty in-memory cache
+# Cache z lockiem — zapobiega podwójnym obliczeniom przy concurrent requests
 _cache: dict = {}
+_cache_lock = threading.Lock()
+_cache_compute_locks: dict[str, threading.Lock] = {}
 CACHE_TTL = 3600  # 1 h
 
 
 def _cached(key: str, fn, ttl: int = CACHE_TTL):
+    # Fast path bez locka
     entry = _cache.get(key)
     if entry and time.time() - entry["ts"] < ttl:
         return entry["data"]
-    result = fn()
-    _cache[key] = {"data": result, "ts": time.time()}
-    return result
+    # Per-key lock — concurrent requests dla różnych kluczy nie blokują się
+    with _cache_lock:
+        compute_lock = _cache_compute_locks.setdefault(key, threading.Lock())
+    with compute_lock:
+        entry = _cache.get(key)
+        if entry and time.time() - entry["ts"] < ttl:
+            return entry["data"]
+        result = fn()
+        _cache[key] = {"data": result, "ts": time.time()}
+        return result
 
 
 def _fetch(tickers: list[str], period_days: int = 365) -> pd.DataFrame:
@@ -139,13 +150,9 @@ def _volatility_history(days: int = 252) -> dict:
     vix_df = _fetch_single("^VIX", days + 30)
     gspc   = _fetch_single("^GSPC", days + 30)
 
-    vix_series  = vix_df["Close"].tail(days)
-    log_ret     = np.log(gspc["Close"] / gspc["Close"].shift(1)).dropna()
-    hv_series   = log_ret.rolling(20).mean().rolling(1).apply(
-        lambda x: float(log_ret[log_ret.index <= x.index[-1]].tail(20).std() * np.sqrt(252) * 100)
-    )
-    # Szybszy sposób: rolling std
-    hv_series = (log_ret.rolling(20).std() * np.sqrt(252) * 100).tail(days)
+    vix_series = vix_df["Close"].tail(days)
+    log_ret    = np.log(gspc["Close"] / gspc["Close"].shift(1)).dropna()
+    hv_series  = (log_ret.rolling(20).std() * np.sqrt(252) * 100).tail(days)
 
     def to_points(series):
         out = []

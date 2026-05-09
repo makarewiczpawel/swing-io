@@ -18,6 +18,8 @@ Przepływ:
 import json
 import logging
 import re
+import threading
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -29,12 +31,14 @@ from app.services.market_data import MarketDataService
 from app.services.pattern_service import get_patterns
 from app.services.quant_service import get_quant_snapshot
 from app.services.volume_service import get_volume_analysis
-from app.services import performance_service
+from app.services import performance_service, state_store
 from app.services.email_service import send_signal_alert
 
 logger = logging.getLogger(__name__)
 
-# ─── In-memory store ─────────────────────────────────────────────────────────
+# ─── In-memory store + lock ──────────────────────────────────────────────────
+
+_lock = threading.RLock()
 
 _signals_history: list[dict] = []
 _position_state: dict = {
@@ -48,16 +52,45 @@ _position_state: dict = {
 MAX_HISTORY = 50
 
 # Auto-korekta progu confidence (Faza 6)
-# Gdy win rate < 45% przez 30 dni → +5 do wymaganego confidence
 _confidence_adjustment: int = 0
+
+# Modele Claude
+_ORCHESTRATOR_MODEL = "claude-sonnet-4-6"
+_RISK_MANAGER_MODEL = "claude-sonnet-4-6"
+_CHAT_MODEL         = "claude-sonnet-4-6"
+
+
+def _load_state() -> None:
+    """Załaduj zapisany stan z dysku (przy starcie aplikacji)."""
+    global _confidence_adjustment
+    data = state_store.load("agent_state")
+    if not data:
+        return
+    with _lock:
+        _signals_history.clear()
+        _signals_history.extend(data.get("signals_history", []))
+        _position_state.update(data.get("position_state", _position_state))
+        _confidence_adjustment = data.get("confidence_adjustment", 0)
+    logger.info(f"Załadowano agent_state: {len(_signals_history)} sygnałów, position={_position_state['status']}")
+
+
+def _save_state() -> None:
+    with _lock:
+        state_store.save("agent_state", {
+            "signals_history":       list(_signals_history),
+            "position_state":        dict(_position_state),
+            "confidence_adjustment": _confidence_adjustment,
+        })
 
 
 def get_signals_history() -> list[dict]:
-    return _signals_history
+    with _lock:
+        return list(_signals_history)
 
 
 def get_position() -> dict:
-    return _position_state.copy()
+    with _lock:
+        return _position_state.copy()
 
 
 # ─── Agenty algorytmiczne ─────────────────────────────────────────────────────
@@ -176,12 +209,41 @@ def _get_client() -> Optional[anthropic.Anthropic]:
 
 
 def _parse_json(text: str) -> dict:
-    """Wyodrębnij JSON z odpowiedzi Claude (może mieć markdown code block)."""
+    """Wyodrębnij JSON z odpowiedzi Claude — toleruje markdown i preambułę."""
     text = text.strip()
-    # Usuń ```json ... ```
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Fallback: znajdź pierwszy {...} blok w tekście
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise
+
+
+def _claude_call_with_retry(client: anthropic.Anthropic, *, model: str, max_tokens: int,
+                            system: str, messages: list, max_retries: int = 3) -> str:
+    """Wywołaj Claude API z exponential backoff."""
+    delay = 1.0
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=max_tokens,
+                system=system, messages=messages,
+            )
+            return resp.content[0].text
+        except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                logger.warning(f"Claude API error (attempt {attempt+1}/{max_retries}): {e}. Retry in {delay}s")
+                time.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(f"Claude API failed after {max_retries} attempts: {e}")
+    raise last_err if last_err else RuntimeError("Claude API call failed")
 
 
 # ─── Orchestrator ─────────────────────────────────────────────────────────────
@@ -240,13 +302,12 @@ def _call_orchestrator(
     }
 
     try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=512,
+        text = _claude_call_with_retry(
+            client, model=_ORCHESTRATOR_MODEL, max_tokens=512,
             system=_ORCHESTRATOR_SYSTEM,
             messages=[{"role": "user", "content": json.dumps(context, default=str)}],
         )
-        return _parse_json(resp.content[0].text)
+        return _parse_json(text)
     except Exception as e:
         logger.error(f"Orchestrator error: {e}")
         return {"error": str(e), "signal": "HOLD", "confidence": 0}
@@ -306,13 +367,12 @@ def _call_risk_manager(
     }
 
     try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=256,
+        text = _claude_call_with_retry(
+            client, model=_RISK_MANAGER_MODEL, max_tokens=256,
             system=_RISK_MANAGER_SYSTEM,
             messages=[{"role": "user", "content": json.dumps(context, default=str)}],
         )
-        return _parse_json(resp.content[0].text)
+        return _parse_json(text)
     except Exception as e:
         logger.error(f"Risk manager error: {e}")
         return {"approved": True, "position_size_pct": 2.0, "rr_ratio": 0.0,
@@ -332,16 +392,21 @@ def run_analysis(interval: str = "1D") -> dict:
     volume  = _volume_analyst()
     quant   = _quant_analyst()
 
-    # 2. Feedback loop context
-    signal_outcomes = performance_service.get_recent_outcomes(_signals_history, n=20)
-    win_rate        = performance_service.get_win_rate(_signals_history, days=30)
+    # 2. Feedback loop context (snapshot pod lockiem)
+    with _lock:
+        history_snapshot = list(_signals_history)
+        position_snapshot = dict(_position_state)
+        conf_adj = _confidence_adjustment
+
+    signal_outcomes = performance_service.get_recent_outcomes(history_snapshot, n=20)
+    win_rate        = performance_service.get_win_rate(history_snapshot, days=30)
     _update_confidence_adjustment(win_rate)
 
     # 3. Orchestrator (Claude)
     signal = _call_orchestrator(
         trend, pattern, volume, quant,
-        _position_state, _signals_history,
-        signal_outcomes, win_rate, _confidence_adjustment,
+        position_snapshot, history_snapshot,
+        signal_outcomes, win_rate, conf_adj,
     )
 
     # 4. Risk Manager (Claude)
@@ -390,21 +455,23 @@ def run_analysis(interval: str = "1D") -> dict:
     if final_signal in ("BUY", "SELL"):
         send_signal_alert(result)
 
-    # 9. Zapisz do historii
-    _signals_history.insert(0, {
-        "id":          ts,
-        "timestamp":   ts,
-        "interval":    interval,
-        "signal":      final_signal,
-        "confidence":  signal.get("confidence", 0),
-        "entry_price": signal.get("entry_price"),
-        "stop_loss":   signal.get("stop_loss"),
-        "take_profit": signal.get("take_profit"),
-        "reasoning":   signal.get("reasoning", ""),
-        "key_factors": signal.get("key_factors", []),
-    })
-    if len(_signals_history) > MAX_HISTORY:
-        _signals_history.pop()
+    # 9. Zapisz do historii (atomowo) + persist
+    with _lock:
+        _signals_history.insert(0, {
+            "id":          ts,
+            "timestamp":   ts,
+            "interval":    interval,
+            "signal":      final_signal,
+            "confidence":  signal.get("confidence", 0),
+            "entry_price": signal.get("entry_price"),
+            "stop_loss":   signal.get("stop_loss"),
+            "take_profit": signal.get("take_profit"),
+            "reasoning":   signal.get("reasoning", ""),
+            "key_factors": signal.get("key_factors", []),
+        })
+        if len(_signals_history) > MAX_HISTORY:
+            _signals_history.pop()
+    _save_state()
 
     return result
 
@@ -422,16 +489,16 @@ def _update_confidence_adjustment(win_rate: Optional[float]) -> None:
 
 def _update_position(result: dict):
     sig = result.get("signal")
-    if sig == "BUY" and _position_state["status"] == "FLAT":
-        _position_state.update({
-            "status":      "LONG",
-            "entry_price": result.get("entry_price"),
-            "entry_time":  result.get("timestamp"),
-            "stop_loss":   result.get("stop_loss"),
-            "take_profit": result.get("take_profit"),
-        })
-    elif sig in ("SELL", "HOLD") and _position_state["status"] == "LONG":
-        if sig == "SELL":
+    with _lock:
+        if sig == "BUY" and _position_state["status"] == "FLAT":
+            _position_state.update({
+                "status":      "LONG",
+                "entry_price": result.get("entry_price"),
+                "entry_time":  result.get("timestamp"),
+                "stop_loss":   result.get("stop_loss"),
+                "take_profit": result.get("take_profit"),
+            })
+        elif sig == "SELL" and _position_state["status"] == "LONG":
             _position_state.update({
                 "status": "FLAT", "entry_price": None,
                 "entry_time": None, "stop_loss": None, "take_profit": None,
@@ -453,9 +520,10 @@ def chat(message: str, history: list[dict] | None = None) -> str:
     if client is None:
         return "⚠️ ANTHROPIC_API_KEY nie skonfigurowany. Dodaj klucz do pliku .env."
 
-    # Zbuduj kontekst rynkowy
-    pos = _position_state
-    last_sig = _signals_history[0] if _signals_history else None
+    with _lock:
+        pos = _position_state.copy()
+        last_sig = _signals_history[0].copy() if _signals_history else None
+
     try:
         quant_snap = get_quant_snapshot()
         vix   = quant_snap.get("volatility", {}).get("vix", "N/A")
@@ -473,18 +541,15 @@ def chat(message: str, history: list[dict] | None = None) -> str:
 
     messages = []
     if history:
-        for h in history[-6:]:  # ostatnie 6 wiadomości
+        for h in history[-6:]:
             messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": f"{context}\n\nPytanie: {message}"})
 
     try:
-        resp = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            system=_CHAT_SYSTEM,
-            messages=messages,
+        return _claude_call_with_retry(
+            client, model=_CHAT_MODEL, max_tokens=1024,
+            system=_CHAT_SYSTEM, messages=messages,
         )
-        return resp.content[0].text
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return f"Błąd: {e}"

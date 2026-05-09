@@ -163,7 +163,7 @@ def _candle_patterns(df: pd.DataFrame) -> list:
                                  "Bearish Engulfing — silny sygnał spadku"))
 
         # Morning Star (3-świecowy, byczý)
-        p2_bear = p2c < p2o and abs(p2c - p2o) / p2_rng(p2h, p2l) > 0.5
+        p2_bear = p2c < p2o and abs(p2c - p2o) / _p2_rng(p2h, p2l) > 0.5
         p1_small = p_body / p_rng < 0.35
         curr_bull = c > o and body / rng > 0.45 and c > (p2o + p2c) / 2
         if p2_bear and p1_small and curr_bull:
@@ -171,7 +171,7 @@ def _candle_patterns(df: pd.DataFrame) -> list:
                                  "Morning Star — silne odwrócenie wzrostowe"))
 
         # Evening Star (3-świecowy, niedźwiedzi)
-        p2_bull = p2c > p2o and abs(p2c - p2o) / p2_rng(p2h, p2l) > 0.5
+        p2_bull = p2c > p2o and abs(p2c - p2o) / _p2_rng(p2h, p2l) > 0.5
         curr_bear = c < o and body / rng > 0.45 and c < (p2o + p2c) / 2
         if p2_bull and p1_small and curr_bear:
             patterns.append(_pat(t, "EVENING_STAR", "bearish", 3,
@@ -180,7 +180,7 @@ def _candle_patterns(df: pd.DataFrame) -> list:
         # Three White Soldiers (okno 3)
         if (c > o and pc > po and p2c > p2o
                 and body / rng > 0.5 and p_body / p_rng > 0.5
-                and abs(p2c - p2o) / p2_rng(p2h, p2l) > 0.5
+                and abs(p2c - p2o) / _p2_rng(p2h, p2l) > 0.5
                 and c > pc > p2c):
             patterns.append(_pat(t, "THREE_WHITE_SOLDIERS", "bullish", 3,
                                  "Three White Soldiers — silna kontynuacja wzrostu"))
@@ -188,7 +188,7 @@ def _candle_patterns(df: pd.DataFrame) -> list:
         # Three Black Crows (okno 3)
         if (c < o and pc < po and p2c < p2o
                 and body / rng > 0.5 and p_body / p_rng > 0.5
-                and abs(p2c - p2o) / p2_rng(p2h, p2l) > 0.5
+                and abs(p2c - p2o) / _p2_rng(p2h, p2l) > 0.5
                 and c < pc < p2c):
             patterns.append(_pat(t, "THREE_BLACK_CROWS", "bearish", 3,
                                  "Three Black Crows — silna kontynuacja spadku"))
@@ -201,7 +201,7 @@ def _pat(time, type_, direction, strength, description):
             "strength": strength, "description": description}
 
 
-def p2_rng(h, l):
+def _p2_rng(h, l):
     return (h - l) or 1e-6
 
 

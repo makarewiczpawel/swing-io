@@ -11,10 +11,13 @@ Przepływ:
 
 import logging
 import math
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import yfinance as yf
+
+from app.services import state_store
 
 logger = logging.getLogger(__name__)
 
@@ -24,71 +27,95 @@ INITIAL_CAPITAL = 100_000.0   # $
 EXPIRY_DAYS     = 10           # dni do auto-zamknięcia pozycji
 TICKER          = "^GSPC"
 
-# ─── Stan w pamięci ───────────────────────────────────────────────────────────
+# ─── Stan w pamięci + lock ────────────────────────────────────────────────────
 
-# Rejestr ocen sygnałów {signal_id → outcome}
+_lock = threading.RLock()
+
 _signal_outcomes: dict[str, dict] = {}
 
 _portfolio: dict = {
     "initial_capital": INITIAL_CAPITAL,
-    "closed_trades": [],   # list[dict]
-    "open_positions": [],  # list[dict]  (max 1 w tej wersji)
-    "equity_curve": [],    # list[{date, equity, benchmark}]
-    "benchmark_entry": None,  # {date, price} – pierwszy trade wyznacza start benchmarka
+    "closed_trades": [],
+    "open_positions": [],
+    "equity_curve": [],
+    "benchmark_entry": None,
 }
+
+
+def _load_state() -> None:
+    data = state_store.load("performance")
+    if not data:
+        return
+    with _lock:
+        _portfolio.update(data.get("portfolio", {}))
+        _signal_outcomes.clear()
+        _signal_outcomes.update(data.get("signal_outcomes", {}))
+    logger.info(f"Załadowano performance: {len(_portfolio.get('closed_trades', []))} closed, "
+                f"{len(_portfolio.get('open_positions', []))} open")
+
+
+def _save_state() -> None:
+    with _lock:
+        state_store.save("performance", {
+            "portfolio":        dict(_portfolio),
+            "signal_outcomes":  dict(_signal_outcomes),
+        })
 
 
 # ─── API publiczne ────────────────────────────────────────────────────────────
 
 def open_position(signal: dict) -> Optional[dict]:
     """Otwórz pozycję na podstawie zatwierdzonego sygnału BUY."""
-    if _portfolio["open_positions"]:
-        logger.info("Pozycja już otwarta — pomijam otwarcie nowej")
-        return None
+    with _lock:
+        if _portfolio["open_positions"]:
+            logger.info("Pozycja już otwarta — pomijam otwarcie nowej")
+            return None
 
-    entry_price = signal.get("entry_price")
-    stop_loss   = signal.get("stop_loss")
-    take_profit = signal.get("take_profit")
-    size_pct    = signal.get("position_size_pct", 2.0)
+        entry_price = signal.get("entry_price")
+        stop_loss   = signal.get("stop_loss")
+        take_profit = signal.get("take_profit")
+        size_pct    = signal.get("position_size_pct", 2.0)
 
-    if not entry_price or not stop_loss:
-        logger.warning("Brak entry_price lub stop_loss — nie otwieram pozycji")
-        return None
+        if not entry_price or not stop_loss:
+            logger.warning("Brak entry_price lub stop_loss — nie otwieram pozycji")
+            return None
 
-    current_equity = _current_equity()
-    capital_at_risk = current_equity * (size_pct / 100)
-    shares = capital_at_risk / entry_price
+        current_equity = _current_equity()
+        capital_at_risk = current_equity * (size_pct / 100)
+        shares = capital_at_risk / entry_price
 
-    now = datetime.now(timezone.utc)
-    pos = {
-        "id":           signal.get("id", now.isoformat()),
-        "signal_id":    signal.get("id"),
-        "entry_date":   now.date().isoformat(),
-        "entry_price":  entry_price,
-        "stop_loss":    stop_loss,
-        "take_profit":  take_profit,
-        "size_pct":     size_pct,
-        "shares":       shares,
-        "capital_used": capital_at_risk,
-        "expiry_date":  (now + timedelta(days=EXPIRY_DAYS)).date().isoformat(),
-        "status":       "open",
-    }
-    _portfolio["open_positions"].append(pos)
+        now = datetime.now(timezone.utc)
+        pos = {
+            "id":           signal.get("id", now.isoformat()),
+            "signal_id":    signal.get("id"),
+            "entry_date":   now.date().isoformat(),
+            "entry_price":  entry_price,
+            "stop_loss":    stop_loss,
+            "take_profit":  take_profit,
+            "size_pct":     size_pct,
+            "shares":       shares,
+            "capital_used": capital_at_risk,
+            "expiry_date":  (now + timedelta(days=EXPIRY_DAYS)).date().isoformat(),
+            "status":       "open",
+        }
+        _portfolio["open_positions"].append(pos)
 
-    # Ustaw punkt startowy benchmarka przy pierwszym trade
-    if _portfolio["benchmark_entry"] is None:
-        _portfolio["benchmark_entry"] = {"date": now.date().isoformat(), "price": entry_price}
+        if _portfolio["benchmark_entry"] is None:
+            _portfolio["benchmark_entry"] = {"date": now.date().isoformat(), "price": entry_price}
 
     logger.info(f"Otwarto pozycję: {shares:.4f} units @ {entry_price:.2f}, SL={stop_loss:.2f}, TP={take_profit}")
+    _save_state()
     return pos
 
 
 def check_and_close_positions() -> list[dict]:
     """Sprawdź otwarte pozycje — zamknij te, które osiągnęły SL/TP/expiry."""
+    with _lock:
+        positions_to_check = list(_portfolio["open_positions"])
+
     closed = []
     remaining = []
-
-    for pos in _portfolio["open_positions"]:
+    for pos in positions_to_check:
         result = _evaluate_position(pos)
         if result:
             _close_position(pos, **result)
@@ -96,7 +123,11 @@ def check_and_close_positions() -> list[dict]:
         else:
             remaining.append(pos)
 
-    _portfolio["open_positions"] = remaining
+    with _lock:
+        _portfolio["open_positions"] = remaining
+
+    if closed:
+        _save_state()
     return closed
 
 
@@ -143,11 +174,13 @@ def get_performance() -> dict:
 
 def set_initial_capital(amount: float) -> None:
     """Resetuj/ustaw kapitał startowy (resetuje też historię)."""
-    _portfolio["initial_capital"] = amount
-    _portfolio["closed_trades"]   = []
-    _portfolio["open_positions"]  = []
-    _portfolio["equity_curve"]    = []
-    _portfolio["benchmark_entry"] = None
+    with _lock:
+        _portfolio["initial_capital"] = amount
+        _portfolio["closed_trades"]   = []
+        _portfolio["open_positions"]  = []
+        _portfolio["equity_curve"]    = []
+        _portfolio["benchmark_entry"] = None
+    _save_state()
 
 
 def evaluate_signal(signal_id: str, entry_date: str, entry_price: float,
@@ -159,8 +192,10 @@ def evaluate_signal(signal_id: str, entry_date: str, entry_price: float,
       BREAKEVEN— P&L w zakresie -0.3% do +0.3% po 5 dniach
       EXPIRED  — brak TP/SL w 5 dni, P&L na zamknięciu dnia 5
     """
-    if signal_id in _signal_outcomes:
-        return _signal_outcomes[signal_id]
+    with _lock:
+        cached = _signal_outcomes.get(signal_id)
+    if cached is not None:
+        return cached
 
     try:
         end = (datetime.fromisoformat(entry_date) + timedelta(days=8)).date().isoformat()
@@ -186,22 +221,26 @@ def evaluate_signal(signal_id: str, entry_date: str, entry_price: float,
             # TP hit
             if take_profit and high >= take_profit:
                 outcome = {"outcome": "WIN", "reason": "TP", "pnl_pct": round((take_profit - entry_price) / entry_price * 100, 2), "close_date": str(bar_date.date())}
-                _signal_outcomes[signal_id] = outcome
+                with _lock:
+                    _signal_outcomes[signal_id] = outcome
                 return outcome
             # +2% hit before SL
             if pnl_h >= WIN_PCT and (stop_loss is None or low > stop_loss):
                 outcome = {"outcome": "WIN", "reason": "+2%", "pnl_pct": round(WIN_PCT, 2), "close_date": str(bar_date.date())}
-                _signal_outcomes[signal_id] = outcome
+                with _lock:
+                    _signal_outcomes[signal_id] = outcome
                 return outcome
             # SL hit
             if stop_loss and low <= stop_loss:
                 outcome = {"outcome": "LOSS", "reason": "SL", "pnl_pct": round((stop_loss - entry_price) / entry_price * 100, 2), "close_date": str(bar_date.date())}
-                _signal_outcomes[signal_id] = outcome
+                with _lock:
+                    _signal_outcomes[signal_id] = outcome
                 return outcome
             # -1.5% hit before TP
             if pnl_l <= LOSS_PCT:
                 outcome = {"outcome": "LOSS", "reason": "-1.5%", "pnl_pct": round(LOSS_PCT, 2), "close_date": str(bar_date.date())}
-                _signal_outcomes[signal_id] = outcome
+                with _lock:
+                    _signal_outcomes[signal_id] = outcome
                 return outcome
 
         # Dzień 5 — expiry
@@ -212,7 +251,8 @@ def evaluate_signal(signal_id: str, entry_date: str, entry_price: float,
         else:
             outcome_label = "EXPIRED"
         outcome = {"outcome": outcome_label, "reason": "5d", "pnl_pct": round(pnl, 2), "close_date": str(bars.index[-1].date())}
-        _signal_outcomes[signal_id] = outcome
+        with _lock:
+            _signal_outcomes[signal_id] = outcome
         return outcome
 
     except Exception as e:
@@ -320,7 +360,8 @@ def _close_position(pos: dict, close_price: float, close_date: str, close_reason
         "rr_actual":    rr,
         "win":          pnl_usd > 0,
     })
-    _portfolio["closed_trades"].append(pos)
+    with _lock:
+        _portfolio["closed_trades"].append(pos)
     logger.info(f"Zamknięto pozycję: {close_reason} @ {close_price:.2f}, P&L={pnl_usd:.2f} ({pnl_pct:.2f}%)")
 
 

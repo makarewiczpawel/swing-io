@@ -5,6 +5,7 @@ Wysyła alerty przy nowym sygnale BUY/SELL.
 
 import logging
 import smtplib
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
@@ -16,8 +17,22 @@ logger = logging.getLogger(__name__)
 SIGNAL_EMOJI = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
 
 
-def send_signal_alert(result: dict) -> bool:
-    """Wyślij email z nowym sygnałem. Zwraca True jeśli wysłano."""
+def _fmt(val, suffix: str = "", precision: int = 2) -> str:
+    """Format float z fallbackiem '—' dla None."""
+    if val is None:
+        return "—"
+    try:
+        return f"{float(val):.{precision}f}{suffix}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def send_signal_alert(result: dict, in_background: bool = True) -> bool:
+    """
+    Wyślij email z nowym sygnałem.
+    in_background=True: SMTP w wątku — nie blokuje analizy. Zwraca True jeśli zakolejkowano.
+    in_background=False: synchronicznie. Zwraca True jeśli wysłano.
+    """
     settings = get_settings()
     if not settings.alerts_enabled:
         return False
@@ -27,8 +42,17 @@ def send_signal_alert(result: dict) -> bool:
 
     signal = result.get("signal", "HOLD")
     if signal == "HOLD":
-        return False  # nie wysyłamy alertów dla HOLD
+        return False
 
+    if in_background:
+        threading.Thread(target=_send_sync, args=(result,), daemon=True).start()
+        return True
+    return _send_sync(result)
+
+
+def _send_sync(result: dict) -> bool:
+    settings = get_settings()
+    signal = result.get("signal", "HOLD")
     try:
         subject = f"{SIGNAL_EMOJI.get(signal, '')} swing.io — Sygnał {signal} S&P 500"
         body = _build_body(result)
@@ -39,7 +63,7 @@ def send_signal_alert(result: dict) -> bool:
         msg["To"]      = settings.alert_recipient
         msg.attach(MIMEText(body, "html", "utf-8"))
 
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
             server.ehlo()
             server.starttls()
             server.login(settings.smtp_user, settings.smtp_password)
@@ -78,28 +102,32 @@ def _build_body(result: dict) -> str:
         <table style="width:100%;border-collapse:collapse;margin:12px 0">
           <tr>
             <td style="padding:6px 12px;border:1px solid #1e293b;color:#94a3b8;font-size:12px">Entry</td>
-            <td style="padding:6px 12px;border:1px solid #1e293b;font-family:monospace">{entry:.2f}</td>
+            <td style="padding:6px 12px;border:1px solid #1e293b;font-family:monospace">{_fmt(entry)}</td>
           </tr>
           <tr>
             <td style="padding:6px 12px;border:1px solid #1e293b;color:#94a3b8;font-size:12px">Stop Loss</td>
-            <td style="padding:6px 12px;border:1px solid #1e293b;color:#ef4444;font-family:monospace">{sl:.2f if sl else '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #1e293b;color:#ef4444;font-family:monospace">{_fmt(sl)}</td>
           </tr>
           <tr>
             <td style="padding:6px 12px;border:1px solid #1e293b;color:#94a3b8;font-size:12px">Take Profit</td>
-            <td style="padding:6px 12px;border:1px solid #1e293b;color:#10b981;font-family:monospace">{tp:.2f if tp else '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #1e293b;color:#10b981;font-family:monospace">{_fmt(tp)}</td>
           </tr>
           <tr>
             <td style="padding:6px 12px;border:1px solid #1e293b;color:#94a3b8;font-size:12px">R/R</td>
-            <td style="padding:6px 12px;border:1px solid #1e293b;font-family:monospace">{rr:.2f if rr else '—'}</td>
+            <td style="padding:6px 12px;border:1px solid #1e293b;font-family:monospace">{_fmt(rr)}</td>
           </tr>
           <tr>
             <td style="padding:6px 12px;border:1px solid #1e293b;color:#94a3b8;font-size:12px">Wielkość</td>
-            <td style="padding:6px 12px;border:1px solid #1e293b;font-family:monospace">{size:.1f if size else '—'}%</td>
+            <td style="padding:6px 12px;border:1px solid #1e293b;font-family:monospace">{_fmt(size, '%', 1)}</td>
           </tr>
         </table>
         """
 
     risk_note = "" if approved else '<p style="color:#ef4444;font-size:12px">⚠ Risk Manager odrzucił sygnał</p>'
+    factors_block = (
+        '<h3 style="font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em">Kluczowe czynniki</h3>'
+        f'<ul style="padding-left:20px">{factors_html}</ul>'
+    ) if factors else ""
 
     return f"""
     <html><body style="background:#0a0e17;color:#e2e8f0;font-family:sans-serif;padding:24px;max-width:600px">
@@ -120,7 +148,7 @@ def _build_body(result: dict) -> str:
       <h3 style="font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em">Uzasadnienie</h3>
       <p style="line-height:1.6;color:#cbd5e1">{reasoning}</p>
 
-      {'<h3 style="font-size:13px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em">Kluczowe czynniki</h3><ul style="padding-left:20px">' + factors_html + '</ul>' if factors else ''}
+      {factors_block}
 
       <hr style="border:1px solid #1e293b;margin:24px 0">
       <p style="color:#475569;font-size:11px">swing.io — automatyczny alert tradingowy</p>

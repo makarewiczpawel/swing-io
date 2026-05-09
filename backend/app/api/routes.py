@@ -23,7 +23,7 @@ from app.services.agent_service import (
 from app.services.performance_service import (
     get_performance, set_initial_capital, get_win_rate,
 )
-from app.services import email_service
+from app.services import email_service, state_store
 from app.core.config import get_settings
 from typing import Optional
 import uuid, logging
@@ -36,8 +36,8 @@ router = APIRouter(prefix="/api", tags=["market"])
 _market_service: Optional[MarketDataService] = None
 _indicators_service: Optional[IndicatorsService] = None
 
-# In-memory store wyników backtestów (zastąpione bazą danych w późniejszych fazach)
-_backtest_results: dict = {}
+# Cache wyników backtestów (file-backed)
+_backtest_results: dict = state_store.load("backtest_results") or {}
 
 
 def get_market_service() -> MarketDataService:
@@ -64,7 +64,7 @@ def get_indicators_service() -> IndicatorsService:
 def get_candles(
     interval: str = Query(
         default="1D",
-        regex="^(1h|4h|1D|1W)$",
+        pattern="^(1h|4h|1D|1W)$",
         description="Interwał: 1h, 4h, 1D, 1W",
     ),
     days: int = Query(
@@ -133,7 +133,7 @@ def get_market_info():
 def get_indicators(
     interval: str = Query(
         default="1D",
-        regex="^(1h|4h|1D|1W)$",
+        pattern="^(1h|4h|1D|1W)$",
         description="Interwał: 1h, 4h, 1D, 1W",
     ),
     days: int = Query(
@@ -166,7 +166,7 @@ def get_indicators(
 def get_regime(
     interval: str = Query(
         default="1D",
-        regex="^(1h|4h|1D|1W)$",
+        pattern="^(1h|4h|1D|1W)$",
         description="Interwał: 1h, 4h, 1D, 1W",
     ),
 ):
@@ -218,6 +218,11 @@ def backtest_run(req: BacktestRequest):
         result["id"] = run_id
         result["created_at"] = datetime.now().isoformat()
         _backtest_results[run_id] = result
+        # Trzymaj max 20 ostatnich (LRU prosty)
+        if len(_backtest_results) > 20:
+            oldest = sorted(_backtest_results.items(), key=lambda kv: kv[1].get("created_at", ""))[0][0]
+            _backtest_results.pop(oldest, None)
+        state_store.save("backtest_results", _backtest_results)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -302,7 +307,7 @@ def quant_correlations(days: int = Query(default=252, ge=30, le=1000)):
 
 @router.get("/patterns")
 def get_pattern_analysis(
-    interval: str = Query(default="1D", regex="^(1h|4h|1D|1W)$"),
+    interval: str = Query(default="1D", pattern="^(1h|4h|1D|1W)$"),
     days: int = Query(default=180, ge=30, le=730),
 ):
     """Formacje świecowe, S/R, dywergencje, Price Action, breakouty."""
@@ -320,7 +325,7 @@ def get_pattern_analysis(
 
 @router.post("/signals/analyze")
 def signals_analyze(
-    interval: str = Query(default="1D", regex="^(1h|4h|1D|1W)$"),
+    interval: str = Query(default="1D", pattern="^(1h|4h|1D|1W)$"),
 ):
     """Uruchom pełną analizę: 4 agenty + Orchestrator + Risk Manager."""
     try:
@@ -389,17 +394,23 @@ def feedback_status():
 
 @router.post("/alerts/config")
 def set_alerts_config(body: dict):
-    """Skonfiguruj alerty email (zapisuje do runtime, nie do .env)."""
+    """Skonfiguruj alerty email — zapis do state_store + override env."""
     import os
-    from app.core.config import get_settings
-    enabled  = body.get("enabled", False)
+    from app.services import state_store
+    enabled  = bool(body.get("enabled", False))
     password = body.get("smtp_password", "")
-    # Ustaw przez os.environ — Settings jest cached, więc nadpisujemy env
+
+    # Persist do JSON (przeżyje restart)
+    saved = state_store.load("alerts_config") or {}
+    saved["alerts_enabled"] = enabled
+    if password:
+        saved["smtp_password"] = password
+    state_store.save("alerts_config", saved)
+
+    # Zaaplikuj natychmiast do bieżącego procesu
     os.environ["ALERTS_ENABLED"] = str(enabled).lower()
     if password:
         os.environ["SMTP_PASSWORD"] = password
-    # Wyczyść cache settings
-    from app.core.config import get_settings
     get_settings.cache_clear()
     settings = get_settings()
     return {
