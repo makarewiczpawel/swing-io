@@ -443,12 +443,19 @@ def test_alert():
     ] if not v]
     if missing:
         return {"sent": False, "reason": f"Brak konfiguracji: {', '.join(missing)}"}
-    sent = email_service.send_signal_alert(mock_result, in_background=False)
+    try:
+        sent = email_service._send_sync(mock_result, raise_on_error=True)
+        err = None
+    except Exception as e:
+        sent = False
+        err = f"{type(e).__name__}: {e}"
     return {
         "sent": sent,
+        "error": err,
         "recipient": settings.alert_recipient,
         "smtp_user": settings.smtp_user,
         "smtp_host": f"{settings.smtp_host}:{settings.smtp_port}",
+        "smtp_password_len": len((settings.smtp_password or "").replace(" ", "")),
     }
 
 

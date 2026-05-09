@@ -50,7 +50,7 @@ def send_signal_alert(result: dict, in_background: bool = True) -> bool:
     return _send_sync(result)
 
 
-def _send_sync(result: dict) -> bool:
+def _send_sync(result: dict, raise_on_error: bool = False) -> bool:
     settings = get_settings()
     signal = result.get("signal", "HOLD")
     try:
@@ -63,17 +63,22 @@ def _send_sync(result: dict) -> bool:
         msg["To"]      = settings.alert_recipient
         msg.attach(MIMEText(body, "html", "utf-8"))
 
+        # Hasło aplikacji Gmail może mieć spacje — usuń żeby ujednolicić
+        smtp_pwd = (settings.smtp_password or "").replace(" ", "")
+
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
             server.ehlo()
             server.starttls()
-            server.login(settings.smtp_user, settings.smtp_password)
+            server.login(settings.smtp_user, smtp_pwd)
             server.sendmail(settings.smtp_user, settings.alert_recipient, msg.as_string())
 
         logger.info(f"Alert email wysłany: {signal} → {settings.alert_recipient}")
         return True
 
     except Exception as e:
-        logger.error(f"Błąd wysyłania emaila: {e}")
+        logger.error(f"Błąd wysyłania emaila: {type(e).__name__}: {e}")
+        if raise_on_error:
+            raise
         return False
 
 
