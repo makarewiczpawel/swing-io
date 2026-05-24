@@ -25,7 +25,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS — pozwól frontendowi na komunikację
+# Dozwolone originy — definiujemy przed middleware
 _origins = [
     settings.frontend_url,
     "http://localhost:5173",
@@ -35,15 +35,8 @@ _origins = [
 if settings.frontend_urls:
     _origins += [u.strip() for u in settings.frontend_urls.split(",") if u.strip()]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Auth middleware — jeśli APP_PASSWORD ustawione, /api/* wymaga Bearer token
+# Auth middleware — dodajemy PRZED CORS, żeby CORS był zewnętrzny i dodawał
+# nagłówki Access-Control-Allow-Origin nawet do odpowiedzi 401.
 _PUBLIC_PATHS = {"/", "/api/health", "/api/auth/login", "/api/auth/status",
                  "/docs", "/openapi.json", "/redoc"}
 
@@ -59,6 +52,17 @@ async def auth_middleware(request: Request, call_next):
     if not header.startswith("Bearer ") or not auth.verify_token(header[7:]):
         return JSONResponse(status_code=401, content={"detail": "Brak autoryzacji"})
     return await call_next(request)
+
+# CORS — dodajemy PO auth_middleware; w Starlette ostatni add_middleware
+# staje się najbardziej zewnętrzną warstwą, więc opakuje auth i doda
+# nagłówki CORS do wszystkich odpowiedzi, łącznie z 401.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Routy
 app.include_router(router)
