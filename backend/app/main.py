@@ -26,7 +26,12 @@ app = FastAPI(
 )
 
 # CORS — pozwól frontendowi na komunikację
-_origins = [settings.frontend_url, "http://localhost:5173", "http://localhost:3000"]
+_origins = [
+    settings.frontend_url,
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://swing-io.pages.dev",
+]
 if settings.frontend_urls:
     _origins += [u.strip() for u in settings.frontend_urls.split(",") if u.strip()]
 
